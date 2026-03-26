@@ -1,0 +1,279 @@
+// src/db/server-db.js
+// CommonJS Drizzle ORM wrapper for server.js (CJS land)
+// Supports PostgreSQL (default) and SQLite via DB_TYPE env var
+
+"use strict";
+
+const fs = require("node:fs");
+const path = require("node:path");
+
+const DB_TYPE = (process.env.DB_TYPE || "postgresql").toLowerCase();
+const isPostgres = DB_TYPE === "postgresql" || DB_TYPE === "postgres";
+
+let db;
+let schema;
+
+// ─── Drizzle query helpers (shared) ──────────────────────────────────────────
+const { eq, and, desc, sql } = require("drizzle-orm");
+
+// ─── PostgreSQL mode ──────────────────────────────────────────────────────────
+if (isPostgres) {
+  const { drizzle } = require("drizzle-orm/node-postgres");
+  const {
+    pgTable,
+    uuid,
+    varchar,
+    text,
+    integer,
+    jsonb,
+    timestamp,
+    boolean,
+    index,
+    unique,
+    uniqueIndex,
+  } = require("drizzle-orm/pg-core");
+  const { Pool } = require("pg");
+
+  // ── Schema definitions ────────────────────────────────────────────────────
+  const users = pgTable("users", {
+    id: uuid("id").primaryKey().defaultRandom(),
+    loginId: varchar("login_id", { length: 50 }).unique().notNull(),
+    nickname: varchar("nickname", { length: 50 }).unique().notNull(),
+    passwordHash: varchar("password_hash", { length: 255 }).notNull(),
+    lastActiveAt: timestamp("last_active_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
+  });
+
+  const characters = pgTable("characters", {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    name: varchar("name", { length: 50 }).notNull(),
+    appearance: jsonb("appearance").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
+  }, (table) => [
+    index("idx_characters_user_id").on(table.userId),
+  ]);
+
+  const channels = pgTable("channels", {
+    id: uuid("id").primaryKey().defaultRandom(),
+    name: varchar("name", { length: 100 }).notNull(),
+    description: varchar("description", { length: 500 }),
+    ownerId: uuid("owner_id").notNull().references(() => users.id),
+    mapData: jsonb("map_data"),
+    mapConfig: jsonb("map_config"),
+    isPublic: boolean("is_public").default(true),
+    inviteCode: varchar("invite_code", { length: 20 }).unique(),
+    maxPlayers: integer("max_players").default(50),
+    password: varchar("password", { length: 255 }),
+    gatewayConfig: jsonb("gateway_config"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
+  });
+
+  const channelMembers = pgTable("channel_members", {
+    id: uuid("id").primaryKey().defaultRandom(),
+    channelId: uuid("channel_id").notNull().references(() => channels.id, { onDelete: "cascade" }),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    role: varchar("role", { length: 20 }).notNull().default("member"),
+    joinedAt: timestamp("joined_at", { withTimezone: true }).defaultNow(),
+  }, (table) => [
+    index("idx_channel_members_channel_id").on(table.channelId),
+    index("idx_channel_members_user_id").on(table.userId),
+    unique("channel_members_channel_user_unique").on(table.channelId, table.userId),
+  ]);
+
+  const npcs = pgTable("npcs", {
+    id: uuid("id").primaryKey().defaultRandom(),
+    channelId: uuid("channel_id").notNull().references(() => channels.id, { onDelete: "cascade" }),
+    name: varchar("name", { length: 100 }).notNull(),
+    positionX: integer("position_x").notNull(),
+    positionY: integer("position_y").notNull(),
+    direction: varchar("direction", { length: 10 }).default("down"),
+    appearance: jsonb("appearance").notNull(),
+    openclawConfig: jsonb("openclaw_config").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
+  }, (table) => [
+    index("idx_npcs_channel_id").on(table.channelId),
+    unique("npcs_channel_position_unique").on(table.channelId, table.positionX, table.positionY),
+  ]);
+
+  const meetingMinutes = pgTable("meeting_minutes", {
+    id: uuid("id").primaryKey().defaultRandom(),
+    channelId: uuid("channel_id").notNull().references(() => channels.id, { onDelete: "cascade" }),
+    topic: text("topic").notNull(),
+    transcript: text("transcript").notNull(),
+    participants: jsonb("participants").notNull().default([]),
+    totalTurns: integer("total_turns").notNull().default(0),
+    durationSeconds: integer("duration_seconds"),
+    initiatorId: uuid("initiator_id").references(() => users.id, { onDelete: "set null" }),
+    keyTopics: jsonb("key_topics").notNull().default([]),
+    conclusions: text("conclusions"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  }, (table) => [
+    index("idx_meeting_minutes_channel").on(table.channelId),
+    index("idx_meeting_minutes_created").on(table.createdAt),
+  ]);
+
+  const tasks = pgTable("tasks", {
+    id: uuid("id").defaultRandom().primaryKey(),
+    channelId: uuid("channel_id").notNull().references(() => channels.id),
+    npcId: uuid("npc_id").notNull().references(() => npcs.id, { onDelete: "cascade" }),
+    assignerId: uuid("assigner_id").notNull().references(() => characters.id),
+    npcTaskId: varchar("npc_task_id", { length: 64 }).notNull(),
+    title: varchar("title", { length: 200 }).notNull(),
+    summary: text("summary"),
+    status: varchar("status", { length: 20 }).notNull().default("pending"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+  }, (table) => [
+    index("idx_tasks_channel").on(table.channelId),
+    index("idx_tasks_npc").on(table.npcId),
+    uniqueIndex("idx_tasks_npc_task_id").on(table.npcId, table.npcTaskId),
+  ]);
+
+  schema = { users, characters, channels, channelMembers, npcs, meetingMinutes, tasks };
+
+  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  db = drizzle(pool, { schema });
+
+  console.log("[server-db] PostgreSQL mode — Drizzle ORM initialized");
+
+// ─── SQLite mode ──────────────────────────────────────────────────────────────
+} else {
+  const { drizzle } = require("drizzle-orm/better-sqlite3");
+  const {
+    sqliteTable,
+    text,
+    integer,
+    index,
+    unique,
+    uniqueIndex,
+  } = require("drizzle-orm/sqlite-core");
+  const Database = require("better-sqlite3");
+
+  // Ensure data/ directory exists for the DB file
+  const dbPath = process.env.SQLITE_PATH || path.join(__dirname, "../../data/deskrpg.db");
+  const dbDir = path.dirname(dbPath);
+  if (!fs.existsSync(dbDir)) {
+    fs.mkdirSync(dbDir, { recursive: true });
+  }
+
+  // ── Schema definitions ────────────────────────────────────────────────────
+  const users = sqliteTable("users", {
+    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    loginId: text("login_id").unique().notNull(),
+    nickname: text("nickname").unique().notNull(),
+    passwordHash: text("password_hash").notNull(),
+    lastActiveAt: text("last_active_at"),
+    createdAt: text("created_at").$defaultFn(() => new Date().toISOString()),
+    updatedAt: text("updated_at").$defaultFn(() => new Date().toISOString()),
+  });
+
+  const characters = sqliteTable("characters", {
+    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    appearance: text("appearance").notNull(),
+    createdAt: text("created_at").$defaultFn(() => new Date().toISOString()),
+    updatedAt: text("updated_at").$defaultFn(() => new Date().toISOString()),
+  }, (table) => [
+    index("idx_characters_user_id").on(table.userId),
+  ]);
+
+  const channels = sqliteTable("channels", {
+    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    name: text("name").notNull(),
+    description: text("description"),
+    ownerId: text("owner_id").notNull().references(() => users.id),
+    mapData: text("map_data"),
+    mapConfig: text("map_config"),
+    isPublic: integer("is_public", { mode: "boolean" }).default(true),
+    inviteCode: text("invite_code").unique(),
+    maxPlayers: integer("max_players").default(50),
+    password: text("password"),
+    gatewayConfig: text("gateway_config"),
+    createdAt: text("created_at").$defaultFn(() => new Date().toISOString()),
+    updatedAt: text("updated_at").$defaultFn(() => new Date().toISOString()),
+  });
+
+  const channelMembers = sqliteTable("channel_members", {
+    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    channelId: text("channel_id").notNull().references(() => channels.id, { onDelete: "cascade" }),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    role: text("role").notNull().default("member"),
+    joinedAt: text("joined_at").$defaultFn(() => new Date().toISOString()),
+  }, (table) => [
+    index("idx_channel_members_channel_id").on(table.channelId),
+    index("idx_channel_members_user_id").on(table.userId),
+    unique("channel_members_channel_user_unique").on(table.channelId, table.userId),
+  ]);
+
+  const npcs = sqliteTable("npcs", {
+    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    channelId: text("channel_id").notNull().references(() => channels.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    positionX: integer("position_x").notNull(),
+    positionY: integer("position_y").notNull(),
+    direction: text("direction").default("down"),
+    appearance: text("appearance").notNull(),
+    openclawConfig: text("openclaw_config").notNull(),
+    createdAt: text("created_at").$defaultFn(() => new Date().toISOString()),
+    updatedAt: text("updated_at").$defaultFn(() => new Date().toISOString()),
+  }, (table) => [
+    index("idx_npcs_channel_id").on(table.channelId),
+    unique("npcs_channel_position_unique").on(table.channelId, table.positionX, table.positionY),
+  ]);
+
+  const meetingMinutes = sqliteTable("meeting_minutes", {
+    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    channelId: text("channel_id").notNull().references(() => channels.id, { onDelete: "cascade" }),
+    topic: text("topic").notNull(),
+    transcript: text("transcript").notNull(),
+    participants: text("participants").notNull().default("[]"),
+    totalTurns: integer("total_turns").notNull().default(0),
+    durationSeconds: integer("duration_seconds"),
+    initiatorId: text("initiator_id").references(() => users.id, { onDelete: "set null" }),
+    keyTopics: text("key_topics").notNull().default("[]"),
+    conclusions: text("conclusions"),
+    createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
+  }, (table) => [
+    index("idx_meeting_minutes_channel").on(table.channelId),
+    index("idx_meeting_minutes_created").on(table.createdAt),
+  ]);
+
+  const tasks = sqliteTable("tasks", {
+    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    channelId: text("channel_id").notNull().references(() => channels.id),
+    npcId: text("npc_id").notNull().references(() => npcs.id, { onDelete: "cascade" }),
+    assignerId: text("assigner_id").notNull().references(() => characters.id),
+    npcTaskId: text("npc_task_id").notNull(),
+    title: text("title").notNull(),
+    summary: text("summary"),
+    status: text("status").notNull().default("pending"),
+    createdAt: text("created_at").$defaultFn(() => new Date().toISOString()),
+    updatedAt: text("updated_at").$defaultFn(() => new Date().toISOString()),
+    completedAt: text("completed_at"),
+  }, (table) => [
+    index("idx_tasks_channel").on(table.channelId),
+    index("idx_tasks_npc").on(table.npcId),
+    uniqueIndex("idx_tasks_npc_task_id").on(table.npcId, table.npcTaskId),
+  ]);
+
+  schema = { users, characters, channels, channelMembers, npcs, meetingMinutes, tasks };
+
+  const sqlite = new Database(dbPath);
+
+  // Enable WAL mode and foreign key enforcement
+  sqlite.pragma("journal_mode = WAL");
+  sqlite.pragma("foreign_keys = ON");
+
+  db = drizzle(sqlite, { schema });
+
+  console.log(`[server-db] SQLite mode — Drizzle ORM initialized (${dbPath})`);
+}
+
+module.exports = { db, schema, isPostgres, eq, and, desc, sql };

@@ -1,0 +1,50 @@
+{
+  "name": "deskrpg",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "npx tsx dev-server.ts",
+    "dev:next": "next dev",
+    "setup": "docker compose up -d deskrpg-db && dotenv -e .env.local -- drizzle-kit push --force && echo '✓ Ready — run: npm run dev'",
+    "setup:lite": "node scripts/setup-lite.js",
+    "build": "next build",
+    "start": "node server.js",
+    "lint": "eslint",
+    "db:push": "dotenv -e .env.local -- drizzle-kit push",
+    "db:migrate": "dotenv -e .env.local -- drizzle-kit migrate",
+    "db:studio": "dotenv -e .env.local -- drizzle-kit studio",
+    "db:setup": "dotenv -e .env.local -- drizzle-kit push --force"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "better-sqlite3": "^12.8.0",
+    "drizzle-orm": "^0.45.1",
+    "jose": "^6.2.2",
+    "lucide-react": "^1.7.0",
+    "next": "16.2.1",
+    "pg": "^8.20.0",
+    "phaser": "^3.90.0",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "socket.io": "^4.8.3",
+    "socket.io-client": "^4.8.3",
+    "ws": "^8.20.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^20",
+    "@types/pg": "^8.20.0",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@types/ssh2": "^1.15.5",
+    "dotenv-cli": "^11.0.0",
+    "drizzle-kit": "^0.31.10",
+    "eslint": "^9",
+    "eslint-config-next": "16.2.1",
+    "tailwindcss": "^4",
+    "tsx": "^4.21.0",
+    "typescript": "^5"
+  }
+}

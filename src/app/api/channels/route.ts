@@ -1,0 +1,205 @@
+import { db, jsonForDb } from "@/db";
+import { channels, channelMembers, users, npcs } from "@/db";
+import { NextRequest, NextResponse } from "next/server";
+import { eq, and } from "drizzle-orm";
+import { getMapTemplate } from "@/lib/map-templates";
+import { hashPassword } from "@/lib/password";
+import { internalRpc, getUserId } from "@/lib/internal-rpc";
+
+function generateInviteCode(): string {
+  return Math.random().toString(36).substring(2, 10);
+}
+
+// GET /api/channels — list all channels (public + private) with membership info
+export async function GET(req: NextRequest) {
+  const userId = getUserId(req);
+  if (!userId) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+
+  try {
+    const rows = await db
+      .select({
+        id: channels.id,
+        name: channels.name,
+        description: channels.description,
+        ownerId: channels.ownerId,
+        isPublic: channels.isPublic,
+        inviteCode: channels.inviteCode,
+        maxPlayers: channels.maxPlayers,
+        createdAt: channels.createdAt,
+        ownerNickname: users.nickname,
+        memberRole: channelMembers.role,
+      })
+      .from(channels)
+      .leftJoin(users, eq(channels.ownerId, users.id))
+      .leftJoin(
+        channelMembers,
+        and(eq(channelMembers.channelId, channels.id), eq(channelMembers.userId, userId)),
+      )
+      .orderBy(channels.createdAt);
+
+    const result = rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      description: r.description,
+      ownerId: r.ownerId,
+      isPublic: r.isPublic,
+      isLocked: !r.isPublic,
+      inviteCode: r.inviteCode,
+      maxPlayers: r.maxPlayers,
+      createdAt: r.createdAt,
+      ownerNickname: r.ownerNickname,
+      isMember: !!r.memberRole,
+      playerCount: 0, // TODO: query from socket.io state
+    }));
+
+    return NextResponse.json({ channels: result, currentUserId: userId });
+  } catch (err) {
+    console.error("Failed to fetch channels:", err);
+    return NextResponse.json({ error: "Failed to fetch channels" }, { status: 500 });
+  }
+}
+
+// POST /api/channels — create new channel
+export async function POST(req: NextRequest) {
+  const userId = getUserId(req);
+  if (!userId) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+
+  try {
+    const body = await req.json();
+    const { name, description, isPublic, mapTemplate, password, gatewayConfig, defaultNpc } = body;
+
+    if (!name || typeof name !== "string" || name.length < 1 || name.length > 100) {
+      return NextResponse.json({ error: "name is required (1-100 chars)" }, { status: 400 });
+    }
+
+    const template = getMapTemplate(mapTemplate);
+    if (!template) {
+      return NextResponse.json({ error: "Invalid map template. Choose: office, cafe, classroom" }, { status: 400 });
+    }
+
+    const channelIsPublic = isPublic !== false;
+
+    // Private channels require a password
+    let passwordHash: string | null = null;
+    if (!channelIsPublic) {
+      if (!password || typeof password !== "string" || password.length < 4) {
+        return NextResponse.json({ error: "Private channels require a password (min 4 chars)" }, { status: 400 });
+      }
+      passwordHash = await hashPassword(password);
+    }
+
+    const inviteCode = generateInviteCode();
+
+    const [channel] = await db
+      .insert(channels)
+      .values({
+        name: name.trim(),
+        description: description?.trim() || null,
+        ownerId: userId,
+        isPublic: channelIsPublic,
+        inviteCode,
+        maxPlayers: 50,
+        mapData: jsonForDb({ layers: template.layers, objects: template.objects }),
+        mapConfig: jsonForDb({ cols: template.cols, rows: template.rows, spawnCol: template.spawnCol, spawnRow: template.spawnRow }),
+        password: passwordHash,
+        gatewayConfig: jsonForDb(gatewayConfig || null),
+      })
+      .returning();
+
+    // Auto-insert owner as member with role=owner
+    await db.insert(channelMembers).values({
+      channelId: channel.id,
+      userId,
+      role: "owner",
+    });
+
+    // --- Default NPC creation ---
+    if (defaultNpc && gatewayConfig) {
+      try {
+        const agentId = defaultNpc.agentId || "main";
+        const isMainAgent = agentId === "main";
+
+        // Setup agent on gateway via RPC (non-blocking on failure)
+        try {
+          if (!isMainAgent) {
+            await internalRpc(channel.id, "agents.create", { name: agentId, workspace: `/workspace/${agentId}` });
+            console.log(`[channel] Created new agent: ${agentId}`);
+          }
+
+          // Write persona files
+          if (defaultNpc.identity) {
+            await internalRpc(channel.id, "agents.files.set", {
+              agentId,
+              name: "IDENTITY.md",
+              content: defaultNpc.identity,
+            });
+          }
+          if (defaultNpc.soul) {
+            await internalRpc(channel.id, "agents.files.set", {
+              agentId,
+              name: "SOUL.md",
+              content: defaultNpc.soul,
+            });
+          }
+          if (defaultNpc.meetingProtocol) {
+            await internalRpc(channel.id, "agents.files.set", {
+              agentId,
+              name: "AGENTS.md",
+              content: defaultNpc.meetingProtocol,
+            });
+          }
+          await internalRpc(channel.id, "agents.files.set", {
+            agentId,
+            name: "USER.md",
+            content: `# User\n- Name: Channel Owner\n`,
+          });
+
+          console.log(`[channel] Initialized agent ${agentId} with persona files`);
+        } catch (agentErr) {
+          console.warn("Agent setup failed (NPC will still be created):", agentErr instanceof Error ? agentErr.message : agentErr);
+        }
+
+        // Insert NPC into database (always, even if agent setup failed)
+        const npcPositionX = template.spawnCol + 2;
+        const npcPositionY = template.spawnRow;
+
+        await db.insert(npcs).values({
+          channelId: channel.id,
+          name: defaultNpc.name || "AI Assistant",
+          positionX: npcPositionX,
+          positionY: npcPositionY,
+          direction: "down",
+          appearance: jsonForDb(defaultNpc.appearance || {
+            bodyType: "female",
+            layers: {
+              body: { itemKey: "body", variant: "light" },
+              eyes: { itemKey: "eye_color", variant: "blue" },
+              hair: { itemKey: "hair_pixie", variant: "blonde" },
+              torso: { itemKey: "torso_clothes_longsleeve2_buttoned", variant: "white" },
+              legs: { itemKey: "legs_formal", variant: "teal" },
+              feet: { itemKey: "feet_shoes_basic", variant: "brown" },
+            },
+          }),
+          openclawConfig: jsonForDb({
+            agentId,
+            sessionKeyPrefix: `ot-${channel.id.slice(0, 8)}-${agentId}`,
+            personaConfig: {
+              identity: defaultNpc.identity || "",
+              soul: defaultNpc.soul || "",
+            },
+          }),
+        });
+      } catch (npcErr) {
+        console.error("Failed to create default NPC:", npcErr);
+      }
+    }
+
+    // Return channel without password hash
+    const { password: _pw, ...channelWithoutPassword } = channel;
+
+    return NextResponse.json({ channel: channelWithoutPassword }, { status: 201 });
+  } catch (err) {
+    console.error("Failed to create channel:", err);
+    return NextResponse.json({ error: "Failed to create channel" }, { status: 500 });
+  }
+}
