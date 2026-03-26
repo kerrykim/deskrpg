@@ -196,6 +196,26 @@ export default function MapEditorEditPage() {
   const handleSave = async () => {
     setSaving(true);
     try {
+      // Request fresh map data from Phaser
+      const freshData = await new Promise<{
+        layers: { floor: number[][]; walls: number[][] };
+        objects: MapObject[];
+        spawnCol: number;
+        spawnRow: number;
+      }>((resolve) => {
+        const handler = (data: {
+          layers: { floor: number[][]; walls: number[][] };
+          objects: MapObject[];
+          spawnCol: number;
+          spawnRow: number;
+        }) => {
+          EventBus.off("editor:map-data-response", handler);
+          resolve(data);
+        };
+        EventBus.on("editor:map-data-response", handler);
+        EventBus.emit("editor:request-map-data");
+      });
+
       const res = await fetch(`/api/map-templates/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -205,10 +225,10 @@ export default function MapEditorEditPage() {
           description,
           cols,
           rows,
-          layers: mapDataRef.current?.layers,
-          objects: mapDataRef.current?.objects || [],
-          spawnCol,
-          spawnRow,
+          layers: freshData.layers,
+          objects: freshData.objects,
+          spawnCol: freshData.spawnCol,
+          spawnRow: freshData.spawnRow,
         }),
       });
       if (!res.ok) {

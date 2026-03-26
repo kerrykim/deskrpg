@@ -1262,6 +1262,7 @@ export class GameScene extends Phaser.Scene {
     this.physics.world.setBounds(0, 0, mapWidth, mapHeight);
     this.cameras.main.setBounds(0, 0, mapWidth, mapHeight);
     this.cameras.main.setZoom(2);
+    this.cameras.main.setRoundPixels(true);
 
     // Minimap
     const minimap = this.cameras.add(

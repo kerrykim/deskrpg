@@ -51,6 +51,7 @@ export class EditorScene extends Phaser.Scene {
 
   // Mouse state
   private isPainting = false;
+  private isRightButtonDrag = false;
   private isPanning = false;
   private panStartX = 0;
   private panStartY = 0;
@@ -67,6 +68,7 @@ export class EditorScene extends Phaser.Scene {
   create(): void {
     // Set up camera
     this.cameras.main.setBackgroundColor(0x1a1a2e);
+    this.cameras.main.setRoundPixels(true);
 
     // Create graphics objects
     this.gridOverlay = this.add.graphics();
@@ -154,6 +156,18 @@ export class EditorScene extends Phaser.Scene {
       this.spawnCol = col;
       this.spawnRow = row;
       this.drawSpawnMarker();
+    });
+
+    listen("editor:request-map-data", () => {
+      EventBus.emit("editor:map-data-response", {
+        layers: {
+          floor: this.floorData,
+          walls: this.wallsData,
+        },
+        objects: this.mapObjects,
+        spawnCol: this.spawnCol,
+        spawnRow: this.spawnRow,
+      });
     });
   }
 
@@ -328,6 +342,13 @@ export class EditorScene extends Phaser.Scene {
         this.isPainting = true;
         this.applyTool(pointer);
       }
+
+      // Right click to erase
+      if (pointer.rightButtonDown()) {
+        this.isPainting = true;
+        this.isRightButtonDrag = true;
+        this.applyErase(pointer);
+      }
     });
 
     // Pointer move
@@ -350,13 +371,18 @@ export class EditorScene extends Phaser.Scene {
 
       // Paint/place while dragging
       if (this.isPainting && (this.currentTool === "paint" || this.currentTool === "erase" || this.currentTool === "object")) {
-        this.applyTool(pointer);
+        if (this.isRightButtonDrag) {
+          this.applyErase(pointer);
+        } else {
+          this.applyTool(pointer);
+        }
       }
     });
 
     // Pointer up
     this.input.on("pointerup", () => {
       this.isPainting = false;
+      this.isRightButtonDrag = false;
       this.isPanning = false;
     });
 
@@ -444,6 +470,36 @@ export class EditorScene extends Phaser.Scene {
   }
 
   // ---------------------------------------------------------------------------
+  // Erase via right-click (works regardless of current tool)
+  // ---------------------------------------------------------------------------
+
+  private applyErase(pointer: Phaser.Input.Pointer): void {
+    const coords = this.getGridCoords(pointer);
+    if (!coords) return;
+    const { col, row } = coords;
+
+    // If in object tool mode, remove object at position
+    if (this.currentTool === "object") {
+      const existingIdx = this.mapObjects.findIndex((obj) => {
+        const def = OBJECT_TYPES[obj.type];
+        if (!def) return false;
+        const w = def.width || 1;
+        const h = def.height || 1;
+        return col >= obj.col && col < obj.col + w && row >= obj.row && row < obj.row + h;
+      });
+      if (existingIdx >= 0) {
+        this.mapObjects.splice(existingIdx, 1);
+        this.renderObjects();
+        EventBus.emit("editor:objects-changed", [...this.mapObjects]);
+      }
+      return;
+    }
+
+    // Otherwise erase tile on active layer
+    this.eraseTile(col, row);
+  }
+
+  // ---------------------------------------------------------------------------
   // Paint tile
   // ---------------------------------------------------------------------------
 
@@ -461,8 +517,8 @@ export class EditorScene extends Phaser.Scene {
       layer,
       row,
       col,
-      oldValue,
-      newValue: this.selectedTile,
+      prev: oldValue,
+      next: this.selectedTile,
     });
   }
 
@@ -484,8 +540,8 @@ export class EditorScene extends Phaser.Scene {
       layer,
       row,
       col,
-      oldValue,
-      newValue: 0,
+      prev: oldValue,
+      next: 0,
     });
   }
 
