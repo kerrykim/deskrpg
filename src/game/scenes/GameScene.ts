@@ -1727,6 +1727,29 @@ export class GameScene extends Phaser.Scene {
   // ---------------------------------------------------------------------------
 
   private loadTiledMap(tiledJson: Record<string, unknown>): void {
+    // Resolve external tileset references — Phaser doesn't support them
+    const tilesetArr = tiledJson.tilesets as Array<Record<string, unknown>>;
+    if (tilesetArr) {
+      for (let i = 0; i < tilesetArr.length; i++) {
+        if (tilesetArr[i].source && !tilesetArr[i].image) {
+          // Replace external reference with embedded DeskRPG default tileset
+          const firstgid = tilesetArr[i].firstgid || 1;
+          tilesetArr[i] = {
+            firstgid,
+            name: "deskrpg-tileset",
+            tilewidth: 32,
+            tileheight: 32,
+            tilecount: 16,
+            columns: 16,
+            image: "deskrpg-tileset.png",
+            imagewidth: 512,
+            imageheight: 32,
+          };
+          console.log("[GameScene] Resolved external tileset reference to embedded format");
+        }
+      }
+    }
+
     // Destroy existing layers if any
     if (this.floorLayer) { this.floorLayer.destroy(); this.floorLayer = null; }
     if (this.wallsLayer) { this.wallsLayer.destroy(); this.wallsLayer = null; }
