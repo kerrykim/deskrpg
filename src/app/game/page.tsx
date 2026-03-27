@@ -592,9 +592,15 @@ function GamePageInner() {
         }
 
         // Set pending channel data for GameScene to read during create()
+        // Detect if mapData is actually Tiled JSON (has tiledversion field)
+        const rawMapData = channelData.channel.mapData;
+        const isTiledJson = rawMapData && typeof rawMapData === "object" && "tiledversion" in rawMapData;
+
         setPendingChannelData({
           channelId: channelData.channel.id,
-          mapData: channelData.channel.mapData || null,
+          mapData: isTiledJson ? null : (rawMapData || null),
+          tiledJson: isTiledJson ? rawMapData : null,
+          mapConfig: channelData.channel.mapConfig || null,
         });
 
         // Composite character sprite

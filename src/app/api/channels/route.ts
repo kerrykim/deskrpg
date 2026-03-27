@@ -89,6 +89,11 @@ export async function POST(req: NextRequest) {
     const templateLayers = typeof template.layers === "string" ? JSON.parse(template.layers) : template.layers;
     const templateObjects = typeof template.objects === "string" ? JSON.parse(template.objects) : template.objects;
 
+    // If template has tiledJson, store it directly as channel mapData
+    const templateTiledJson = template.tiledJson
+      ? (typeof template.tiledJson === "string" ? JSON.parse(template.tiledJson) : template.tiledJson)
+      : null;
+
     const channelIsPublic = isPublic !== false;
 
     // Private channels require a password
@@ -111,7 +116,7 @@ export async function POST(req: NextRequest) {
         isPublic: channelIsPublic,
         inviteCode,
         maxPlayers: 50,
-        mapData: jsonForDb({ layers: templateLayers, objects: templateObjects }),
+        mapData: jsonForDb(templateTiledJson || { layers: templateLayers, objects: templateObjects }),
         mapConfig: jsonForDb({ cols: template.cols, rows: template.rows, spawnCol: template.spawnCol, spawnRow: template.spawnRow }),
         password: passwordHash,
         gatewayConfig: jsonForDb(gatewayConfig || null),

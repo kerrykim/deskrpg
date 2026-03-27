@@ -1079,6 +1079,8 @@ export class GameScene extends Phaser.Scene {
   // Channel
   private channelId: string = "";
   private channelMapData: MapData | null = null;
+  private tiledSpawnCol: number | null = null;
+  private tiledSpawnRow: number | null = null;
 
   // Player name label
   private playerNameLabel: Phaser.GameObjects.Text | null = null;
@@ -1182,35 +1184,59 @@ export class GameScene extends Phaser.Scene {
 
   create(): void {
     // Read pending channel data set by game page before scene creation
+    let tiledJsonData: Record<string, unknown> | null = null;
+
     if (pendingChannelData) {
       this.channelId = pendingChannelData.channelId;
-      if (pendingChannelData.mapData) {
-        this.channelMapData = detectAndConvertMapData(pendingChannelData.mapData, MAP_COLS, MAP_ROWS);
+
+      if (pendingChannelData.tiledJson) {
+        // Explicit Tiled JSON passed from game page
+        tiledJsonData = pendingChannelData.tiledJson;
+      } else if (pendingChannelData.mapData) {
+        // Check if mapData IS Tiled JSON (has tiledversion field)
+        if (pendingChannelData.mapData.tiledversion) {
+          tiledJsonData = pendingChannelData.mapData;
+        } else {
+          this.channelMapData = detectAndConvertMapData(pendingChannelData.mapData, MAP_COLS, MAP_ROWS);
+        }
       }
+
+      // Store spawn from mapConfig if available
+      if (pendingChannelData.mapConfig) {
+        const config = pendingChannelData.mapConfig;
+        if (typeof config.spawnCol === "number") this.tiledSpawnCol = config.spawnCol;
+        if (typeof config.spawnRow === "number") this.tiledSpawnRow = config.spawnRow;
+      }
+
       setPendingChannelData(null); // consumed
     }
 
-    // Priority: channel map data > localStorage > default office map
-    let mapData: MapData;
-
-    if (this.channelMapData) {
-      mapData = this.channelMapData;
+    if (tiledJsonData) {
+      // Tiled JSON path — use Phaser's built-in Tiled JSON loader
+      this.loadTiledMap(tiledJsonData);
     } else {
-      const savedMap = this.loadMapFromLocalStorage();
-      if (savedMap) {
-        mapData = detectAndConvertMapData(savedMap, MAP_COLS, MAP_ROWS);
+      // Legacy path: channel map data > localStorage > default office map
+      let mapData: MapData;
+
+      if (this.channelMapData) {
+        mapData = this.channelMapData;
       } else {
-        mapData = buildOfficeMap();
+        const savedMap = this.loadMapFromLocalStorage();
+        if (savedMap) {
+          mapData = detectAndConvertMapData(savedMap, MAP_COLS, MAP_ROWS);
+        } else {
+          mapData = buildOfficeMap();
+        }
       }
+
+      this.floorData = mapData.layers.floor;
+      this.wallsData = mapData.layers.walls;
+      this.mapObjects = mapData.objects;
+
+      // Create tilemap and render objects
+      this.createTilemap();
+      this.renderObjects();
     }
-
-    this.floorData = mapData.layers.floor;
-    this.wallsData = mapData.layers.walls;
-    this.mapObjects = mapData.objects;
-
-    // Create tilemap and render objects
-    this.createTilemap();
-    this.renderObjects();
 
     // Input keys
     if (this.input.keyboard) {
@@ -1694,6 +1720,112 @@ export class GameScene extends Phaser.Scene {
 
     // Also re-request socket in case it was already sent before we registered
     EventBus.emit("request-socket");
+  }
+
+  // ---------------------------------------------------------------------------
+  // Tiled JSON map loading
+  // ---------------------------------------------------------------------------
+
+  private loadTiledMap(tiledJson: Record<string, unknown>): void {
+    // Destroy existing layers if any
+    if (this.floorLayer) { this.floorLayer.destroy(); this.floorLayer = null; }
+    if (this.wallsLayer) { this.wallsLayer.destroy(); this.wallsLayer = null; }
+
+    // Add Tiled JSON to Phaser's tilemap cache
+    this.cache.tilemap.add("channel-map", {
+      format: Phaser.Tilemaps.Formats.TILED_JSON,
+      data: tiledJson,
+    });
+
+    const map = this.make.tilemap({ key: "channel-map" });
+
+    // Map tileset references from Tiled JSON to loaded textures.
+    // The tileset in Tiled is named "deskrpg-tileset"; BootScene generates
+    // the same tiles as "office-tiles". Map one to the other.
+    const tilesets = tiledJson.tilesets as Array<{
+      firstgid: number;
+      source?: string;
+      name?: string;
+      image?: string;
+    }> | undefined;
+
+    for (const ts of tilesets || []) {
+      const tsName = ts.name || ts.source?.replace(/\.tsx$/, "") || "deskrpg-tileset";
+      if (this.textures.exists("office-tiles")) {
+        map.addTilesetImage(tsName, "office-tiles", TILE_SIZE, TILE_SIZE, 0, 0);
+      } else if (this.textures.exists(tsName)) {
+        map.addTilesetImage(tsName, tsName, TILE_SIZE, TILE_SIZE, 0, 0);
+      }
+    }
+
+    // Create tile layers by name
+    const mapWidth = (tiledJson.width as number) || MAP_COLS;
+    const mapHeight = (tiledJson.height as number) || MAP_ROWS;
+
+    const floorLayer = map.createLayer("floor", map.tilesets);
+    if (floorLayer) {
+      floorLayer.setDepth(0);
+      this.floorLayer = floorLayer;
+    }
+
+    const wallsLayer = map.createLayer("walls", map.tilesets);
+    if (wallsLayer) {
+      wallsLayer.setDepth(1);
+      this.wallsLayer = wallsLayer;
+      wallsLayer.setCollisionByProperty({ collision: true });
+    }
+
+    // Extract floor/walls data arrays for the legacy collision system
+    // (isWalkable() checks floorData/wallsData directly)
+    this.floorData = [];
+    this.wallsData = [];
+    for (let r = 0; r < mapHeight; r++) {
+      const floorRow = new Array(mapWidth).fill(0);
+      const wallsRow = new Array(mapWidth).fill(0);
+      for (let c = 0; c < mapWidth; c++) {
+        if (floorLayer) {
+          const tile = floorLayer.getTileAt(c, r);
+          floorRow[c] = tile ? tile.index : 0;
+        }
+        if (wallsLayer) {
+          const tile = wallsLayer.getTileAt(c, r);
+          wallsRow[c] = tile ? tile.index : 0;
+        }
+      }
+      this.floorData.push(floorRow);
+      this.wallsData.push(wallsRow);
+    }
+
+    // Process object layers
+    this.mapObjects = [];
+    const tiledLayers = tiledJson.layers as Array<Record<string, unknown>> | undefined;
+    for (const layer of tiledLayers || []) {
+      if (layer.type === "objectgroup" && layer.name === "objects") {
+        const objects = layer.objects as Array<Record<string, unknown>> | undefined;
+        for (const obj of objects || []) {
+          // Spawn point
+          if (obj.name === "spawn" || obj.type === "spawn") {
+            this.tiledSpawnCol = Math.floor((obj.x as number) / TILE_SIZE);
+            this.tiledSpawnRow = Math.floor((obj.y as number) / TILE_SIZE);
+            continue;
+          }
+
+          // Furniture/object — only add if type is recognized
+          const objectType = (obj.type as string) || "";
+          if (objectType && OBJECT_TYPES[objectType]) {
+            this.mapObjects.push({
+              id: generateObjectId(),
+              type: objectType,
+              col: Math.floor((obj.x as number) / TILE_SIZE),
+              row: Math.floor((obj.y as number) / TILE_SIZE),
+            });
+          }
+        }
+      }
+    }
+
+    this.renderObjects();
+    this.objectOccupiedTiles = computeOccupiedTiles(this.mapObjects);
   }
 
   // ---------------------------------------------------------------------------
@@ -2375,7 +2507,9 @@ export class GameScene extends Phaser.Scene {
     if (this.playerReady) return; // prevent double creation
 
     // Find a free spawn position, checking NPCs, remote players, AND object occupied tiles
-    const { col: spawnCol, row: spawnRow } = this.findFreeSpawn(8, 3);
+    const preferSpawnCol = this.tiledSpawnCol ?? 8;
+    const preferSpawnRow = this.tiledSpawnRow ?? 3;
+    const { col: spawnCol, row: spawnRow } = this.findFreeSpawn(preferSpawnCol, preferSpawnRow);
     const spawnX = spawnCol * TILE_SIZE + TILE_SIZE / 2;
     const spawnY = spawnRow * TILE_SIZE + TILE_SIZE / 2;
 
