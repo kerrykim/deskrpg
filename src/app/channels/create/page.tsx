@@ -74,7 +74,7 @@ function CreateChannelPageInner() {
 
         // Generate thumbnails
         try {
-          const { generateMapThumbnail } = await import("@/lib/map-thumbnail");
+          const { generateMapThumbnail, generateTiledThumbnail } = await import("@/lib/map-thumbnail");
           const thumbs: Record<string, string> = {};
           for (const t of templates) {
             try {
@@ -82,41 +82,10 @@ function CreateChannelPageInner() {
               const detail = await res.json();
               const tmpl = detail.template;
 
-              // Try Tiled JSON first
               if (tmpl.tiledJson) {
                 const tiled = typeof tmpl.tiledJson === "string" ? JSON.parse(tmpl.tiledJson) : tmpl.tiledJson;
-                const layers = { floor: [] as number[][], walls: [] as number[][] };
-                for (const layer of tiled.layers || []) {
-                  if (layer.type === "tilelayer" && layer.data) {
-                    const w = tiled.width;
-                    const rows2d: number[][] = [];
-                    for (let r = 0; r < tiled.height; r++) {
-                      const row: number[] = [];
-                      for (let c = 0; c < w; c++) {
-                        const gid = layer.data[r * w + c] || 0;
-                        row.push(gid > 0 ? gid - 1 : 0);
-                      }
-                      rows2d.push(row);
-                    }
-                    if (layer.name === "floor") layers.floor = rows2d;
-                    else if (layer.name === "walls") layers.walls = rows2d;
-                  }
-                }
-                const objects: { type: string; col: number; row: number }[] = [];
-                for (const layer of tiled.layers || []) {
-                  if (layer.type === "objectgroup") {
-                    for (const obj of layer.objects || []) {
-                      if (obj.type && obj.type !== "spawn") {
-                        objects.push({ type: obj.type, col: Math.floor(obj.x / 32), row: Math.floor(obj.y / 32) });
-                      }
-                    }
-                  }
-                }
-                if (layers.floor.length > 0) {
-                  thumbs[t.id] = generateMapThumbnail(layers, objects, tiled.width, tiled.height, 4);
-                }
+                thumbs[t.id] = generateTiledThumbnail(tiled, 4);
               } else if (tmpl.layers) {
-                // Legacy format
                 const layers = typeof tmpl.layers === "string" ? JSON.parse(tmpl.layers) : tmpl.layers;
                 const objects = typeof tmpl.objects === "string" ? JSON.parse(tmpl.objects) : (tmpl.objects || []);
                 thumbs[t.id] = generateMapThumbnail(layers, objects, tmpl.cols, tmpl.rows, 4);

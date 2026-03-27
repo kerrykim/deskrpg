@@ -54,7 +54,7 @@ function MapEditorListPage() {
 
         // Generate thumbnails
         try {
-          const { generateMapThumbnail } = await import("@/lib/map-thumbnail");
+          const { generateMapThumbnail, generateTiledThumbnail } = await import("@/lib/map-thumbnail");
           const thumbs: Record<string, string> = {};
           for (const t of list) {
             try {
@@ -62,49 +62,9 @@ function MapEditorListPage() {
               const detail = await res.json();
               const tmpl = detail.template;
 
-              // Try Tiled JSON first, fallback to legacy
               if (tmpl.tiledJson) {
                 const tiled = typeof tmpl.tiledJson === "string" ? JSON.parse(tmpl.tiledJson) : tmpl.tiledJson;
-                // Extract layers from Tiled JSON for thumbnail
-                const layers = { floor: [] as number[][], walls: [] as number[][] };
-                const tiledLayers = tiled.layers || [];
-                for (const layer of tiledLayers) {
-                  if (layer.type === "tilelayer" && layer.data) {
-                    const w = tiled.width;
-                    const rows2d: number[][] = [];
-                    for (let r = 0; r < tiled.height; r++) {
-                      const row: number[] = [];
-                      for (let c = 0; c < w; c++) {
-                        // Convert GID to tile index (subtract firstgid, typically 1)
-                        const gid = layer.data[r * w + c] || 0;
-                        row.push(gid > 0 ? gid - 1 : 0);
-                      }
-                      rows2d.push(row);
-                    }
-                    if (layer.name === "floor") layers.floor = rows2d;
-                    else if (layer.name === "walls") layers.walls = rows2d;
-                  }
-                }
-
-                // Extract objects
-                const objects: { type: string; col: number; row: number }[] = [];
-                for (const layer of tiledLayers) {
-                  if (layer.type === "objectgroup") {
-                    for (const obj of layer.objects || []) {
-                      if (obj.type && obj.type !== "spawn") {
-                        objects.push({
-                          type: obj.type,
-                          col: Math.floor(obj.x / 32),
-                          row: Math.floor(obj.y / 32),
-                        });
-                      }
-                    }
-                  }
-                }
-
-                if (layers.floor.length > 0) {
-                  thumbs[t.id] = generateMapThumbnail(layers, objects, tiled.width, tiled.height, 6);
-                }
+                thumbs[t.id] = generateTiledThumbnail(tiled, 6);
               } else if (tmpl.layers) {
                 const layers = typeof tmpl.layers === "string" ? JSON.parse(tmpl.layers) : tmpl.layers;
                 const objects = typeof tmpl.objects === "string" ? JSON.parse(tmpl.objects) : (tmpl.objects || []);
@@ -172,40 +132,11 @@ function MapEditorListPage() {
           const detailRes = await fetch(`/api/map-templates/${template.id}`);
           const detail = await detailRes.json();
           const tmpl = detail.template;
-          const { generateMapThumbnail } = await import("@/lib/map-thumbnail");
 
           if (tmpl.tiledJson) {
+            const { generateTiledThumbnail } = await import("@/lib/map-thumbnail");
             const tiled = typeof tmpl.tiledJson === "string" ? JSON.parse(tmpl.tiledJson) : tmpl.tiledJson;
-            const layers = { floor: [] as number[][], walls: [] as number[][] };
-            for (const layer of tiled.layers || []) {
-              if (layer.type === "tilelayer" && layer.data) {
-                const w = tiled.width;
-                const rows2d: number[][] = [];
-                for (let r = 0; r < tiled.height; r++) {
-                  const row: number[] = [];
-                  for (let c = 0; c < w; c++) {
-                    const gid = layer.data[r * w + c] || 0;
-                    row.push(gid > 0 ? gid - 1 : 0);
-                  }
-                  rows2d.push(row);
-                }
-                if (layer.name === "floor") layers.floor = rows2d;
-                else if (layer.name === "walls") layers.walls = rows2d;
-              }
-            }
-            const objects: { type: string; col: number; row: number }[] = [];
-            for (const layer of tiled.layers || []) {
-              if (layer.type === "objectgroup") {
-                for (const obj of layer.objects || []) {
-                  if (obj.type && obj.type !== "spawn") {
-                    objects.push({ type: obj.type, col: Math.floor(obj.x / 32), row: Math.floor(obj.y / 32) });
-                  }
-                }
-              }
-            }
-            if (layers.floor.length > 0) {
-              setThumbnails((prev) => ({ ...prev, [template.id]: generateMapThumbnail(layers, objects, tiled.width, tiled.height, 6) }));
-            }
+            setThumbnails((prev) => ({ ...prev, [template.id]: generateTiledThumbnail(tiled, 6) }));
           }
         } catch { /* skip thumbnail */ }
       } else {
