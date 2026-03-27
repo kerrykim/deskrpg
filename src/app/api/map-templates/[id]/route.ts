@@ -55,7 +55,7 @@ export async function PUT(req: NextRequest, { params }: Params) {
         spawnCol,
         spawnRow,
         tags: tags?.trim() || null,
-        updatedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString() as unknown as Date,
       })
       .where(eq(mapTemplates.id, id))
       .returning();
