@@ -1813,15 +1813,22 @@ export class GameScene extends Phaser.Scene {
     }
 
     // Create any remaining tile layers (3rd, 4th, etc.)
+    // Special layers (case-insensitive):
+    //   "collision" → hidden, used for collision data only
+    //   "foreground" → rendered above characters (depth 10000+)
     for (let i = 0; i < tileLayerNames.length; i++) {
       const name = tileLayerNames[i];
       if (name === floorLayerName || name === wallsLayerName) continue;
+      const nameLower = name.toLowerCase();
       const extraLayer = map.createLayer(name, map.tilesets);
       if (extraLayer) {
-        extraLayer.setDepth(i + 2);
-        // Hide collision layer — it's processed separately for collision data
-        if (name.toLowerCase() === "collision") {
+        if (nameLower === "collision") {
           extraLayer.setVisible(false);
+        } else if (nameLower === "foreground" || nameLower === "above" || nameLower === "overlay") {
+          // Foreground layer: renders above characters but below UI
+          extraLayer.setDepth(10000);
+        } else {
+          extraLayer.setDepth(i + 2);
         }
       }
     }
