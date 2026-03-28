@@ -219,7 +219,7 @@ function MapEditorListPage() {
         <div className="flex items-center justify-between mb-6">
           <h1 className="text-3xl font-bold">Map Templates</h1>
           <div className="flex items-center gap-2">
-            <input ref={fileInputRef} type="file" accept=".tmj,.tmx,.json,.xml,application/json,text/xml" onChange={handleFileSelect} className="hidden" />
+            <input ref={fileInputRef} type="file" accept=".tmj,.tmx,.json,.xml,.zip,application/json,text/xml,application/zip" onChange={handleFileSelect} className="hidden" />
             <button onClick={() => fileInputRef.current?.click()} disabled={uploading}
               className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary-hover rounded font-semibold text-sm disabled:opacity-50">
               <Upload className="w-4 h-4" /> {uploading ? "Uploading..." : "Upload Map"}

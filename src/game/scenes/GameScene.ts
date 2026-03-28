@@ -1760,24 +1760,80 @@ export class GameScene extends Phaser.Scene {
       data: tiledJson,
     });
 
-    const map = this.make.tilemap({ key: "channel-map" });
-
-    // Map tileset references from Tiled JSON to loaded textures.
-    // The tileset in Tiled is named "deskrpg-tileset"; BootScene generates
-    // the same tiles as "office-tiles". Map one to the other.
-    const tilesets = tiledJson.tilesets as Array<{
+    // Load custom tileset images before creating the tilemap
+    const tilesetDefs = (tiledJson.tilesets as Array<{
       firstgid: number;
       source?: string;
       name?: string;
       image?: string;
-    }> | undefined;
+      tilewidth?: number;
+      tileheight?: number;
+    }>) || [];
 
-    for (const ts of tilesets || []) {
+    const imagesToLoad: { key: string; url: string; tileWidth: number; tileHeight: number }[] = [];
+    for (const ts of tilesetDefs) {
       const tsName = ts.name || ts.source?.replace(/\.tsx$/, "") || "deskrpg-tileset";
-      if (this.textures.exists("office-tiles")) {
+      const tsImage = ts.image || "";
+      const tileW = ts.tilewidth || TILE_SIZE;
+      const tileH = ts.tileheight || TILE_SIZE;
+
+      // Skip if texture already loaded (e.g. "office-tiles" from BootScene)
+      if (this.textures.exists(tsName)) continue;
+
+      // Determine image URL
+      if (tsImage.startsWith("/")) {
+        // Absolute path (e.g. /assets/uploads/{id}/tileset.png)
+        imagesToLoad.push({ key: tsName, url: tsImage, tileWidth: tileW, tileHeight: tileH });
+      } else if (tsImage && tsImage !== "deskrpg-tileset.png") {
+        // Relative path — try common locations
+        imagesToLoad.push({ key: tsName, url: `/assets/uploads/${tsImage}`, tileWidth: tileW, tileHeight: tileH });
+      }
+    }
+
+    if (imagesToLoad.length > 0) {
+      // Dynamically load tileset images, then continue
+      for (const img of imagesToLoad) {
+        this.load.image(img.key, img.url);
+      }
+      this.load.once("complete", () => {
+        this.finishTiledMapLoad(tiledJson, imagesToLoad);
+      });
+      this.load.start();
+      return;
+    }
+
+    // No custom images to load — proceed immediately
+    this.finishTiledMapLoad(tiledJson, []);
+  }
+
+  private finishTiledMapLoad(tiledJson: Record<string, unknown>, loadedImages: { key: string; tileWidth: number; tileHeight: number }[]): void {
+    const map = this.make.tilemap({ key: "channel-map" });
+
+    // Add tilesets to the map
+    const tilesetDefs = (tiledJson.tilesets as Array<{
+      firstgid: number;
+      source?: string;
+      name?: string;
+      image?: string;
+      tilewidth?: number;
+      tileheight?: number;
+    }>) || [];
+
+    for (const ts of tilesetDefs) {
+      const tsName = ts.name || ts.source?.replace(/\.tsx$/, "") || "deskrpg-tileset";
+      const tileW = ts.tilewidth || TILE_SIZE;
+      const tileH = ts.tileheight || TILE_SIZE;
+
+      if (this.textures.exists(tsName)) {
+        // Custom loaded texture or BootScene texture
+        map.addTilesetImage(tsName, tsName, tileW, tileH, 0, 0);
+      } else if (this.textures.exists("office-tiles") && (tsName === "deskrpg-tileset" || (ts.image || "").includes("deskrpg"))) {
+        // DeskRPG default tileset → use office-tiles
         map.addTilesetImage(tsName, "office-tiles", TILE_SIZE, TILE_SIZE, 0, 0);
-      } else if (this.textures.exists(tsName)) {
-        map.addTilesetImage(tsName, tsName, TILE_SIZE, TILE_SIZE, 0, 0);
+      } else if (this.textures.exists("office-tiles")) {
+        // Unknown tileset but office-tiles available — use as fallback
+        console.warn(`[GameScene] Unknown tileset "${tsName}", using office-tiles fallback`);
+        map.addTilesetImage(tsName, "office-tiles", TILE_SIZE, TILE_SIZE, 0, 0);
       }
     }
 
