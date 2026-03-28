@@ -666,28 +666,32 @@ export function setupSocketHandlers(io: Server) {
       if (player) {
         socket.to(player.mapId).emit("player:left", { id: socket.id });
 
-        // Save last position to DB (use shared db proxy that supports both PG and SQLite)
+        // Save last position to DB
+        const px = Math.round(player.x);
+        const py = Math.round(player.y);
+        console.log(`[socket] Saving position for ${player.characterName}: (${px}, ${py}) channel=${player.mapId} user=${player.userId}`);
         try {
-          const { db: sharedDb, channelMembers } = require("../db");
-          sharedDb.update(channelMembers)
-            .set({
-              lastX: Math.round(player.x),
-              lastY: Math.round(player.y),
-            })
+          // Use the shared db + schema from src/db (supports both PG and SQLite)
+          // eslint-disable-next-line @typescript-eslint/no-require-imports
+          const dbModule = require("../db");
+          const result = dbModule.db.update(dbModule.channelMembers)
+            .set({ lastX: px, lastY: py })
             .where(
               and(
-                eq(channelMembers.channelId, player.mapId),
-                eq(channelMembers.userId, player.userId),
+                eq(dbModule.channelMembers.channelId, player.mapId),
+                eq(dbModule.channelMembers.userId, player.userId),
               )
-            )
-            .then(() => {
-              console.log(`[socket] Saved position for ${player.characterName}: (${Math.round(player.x)}, ${Math.round(player.y)})`);
-            })
-            .catch((err: Error) => {
-              console.warn("[socket] Failed to save position:", err.message);
+            );
+          // Handle both sync (SQLite) and async (PG)
+          if (result && typeof result.then === "function") {
+            result.then(() => {
+              console.log(`[socket] Position saved OK for ${player.characterName}`);
+            }).catch((err: Error) => {
+              console.error("[socket] Position save failed (async):", err.message);
             });
+          }
         } catch (e) {
-          console.warn("[socket] Failed to save position:", e instanceof Error ? e.message : e);
+          console.error("[socket] Position save failed (sync):", e instanceof Error ? e.message : e);
         }
 
         players.delete(socket.id);

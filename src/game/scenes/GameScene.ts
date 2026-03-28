@@ -1721,6 +1721,13 @@ export class GameScene extends Phaser.Scene {
       this.clearNpcBubble(data.npcId);
     });
 
+    // Respond to position requests from React (for save-on-leave)
+    EventBus.on("request-player-position", () => {
+      if (this.player) {
+        EventBus.emit("player-position-response", { x: this.player.x, y: this.player.y });
+      }
+    });
+
     // Tell React the scene is ready
     EventBus.emit("scene-ready");
 
