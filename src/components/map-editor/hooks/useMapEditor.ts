@@ -90,7 +90,7 @@ export interface UndoAction {
   changes: Array<{ index: number; oldGid: number; newGid: number }>;
 }
 
-export type Tool = 'paint' | 'erase' | 'pan';
+export type Tool = 'paint' | 'erase' | 'pan' | 'select';
 
 export interface EditorState {
   projectName: string;
@@ -110,6 +110,8 @@ export interface EditorState {
   sortedGids: number[];
   showGrid: boolean;
   showCollision: boolean;
+  selection: { x: number; y: number; width: number; height: number } | null;
+  clipboard: { width: number; height: number; gids: number[][]; layerIndex: number } | null;
 }
 
 // === Core DeskRPG Layer Names ===
@@ -190,7 +192,12 @@ type EditorAction =
   | { type: 'DELETE_TILESET'; firstgid: number }
   | { type: 'UPDATE_TILESET_IMAGE'; firstgid: number; imageInfo: TilesetImageInfo; imageDataUrl: string }
   | { type: 'MARK_CLEAN' }
-  | { type: 'SET_PROJECT_NAME'; name: string };
+  | { type: 'SET_PROJECT_NAME'; name: string }
+  | { type: 'SET_SELECTION'; selection: { x: number; y: number; width: number; height: number } | null }
+  | { type: 'CLEAR_SELECTION' }
+  | { type: 'SET_CLIPBOARD'; clipboard: { width: number; height: number; gids: number[][]; layerIndex: number } }
+  | { type: 'DELETE_SELECTION' }
+  | { type: 'PASTE_CLIPBOARD'; x: number; y: number };
 
 export type { EditorAction };
 
@@ -360,6 +367,88 @@ function editorReducer(state: EditorState, action: EditorAction): EditorState {
       return { ...state, dirty: false };
     case 'SET_PROJECT_NAME':
       return { ...state, projectName: action.name, dirty: true };
+    case 'SET_SELECTION':
+      return { ...state, selection: action.selection };
+    case 'CLEAR_SELECTION':
+      return { ...state, selection: null };
+    case 'SET_CLIPBOARD':
+      return { ...state, clipboard: action.clipboard };
+    case 'DELETE_SELECTION': {
+      if (!state.mapData || !state.selection) return state;
+      const layer = state.mapData.layers[state.activeLayerIndex];
+      if (!layer || layer.type !== 'tilelayer' || !layer.data) return state;
+      const sel = state.selection;
+      const mapW = state.mapData.width;
+      const mapH = state.mapData.height;
+      const changes: Array<{ index: number; oldGid: number; newGid: number }> = [];
+      for (let dy = 0; dy < sel.height; dy++) {
+        for (let dx = 0; dx < sel.width; dx++) {
+          const tx = sel.x + dx;
+          const ty = sel.y + dy;
+          if (tx < 0 || tx >= mapW || ty < 0 || ty >= mapH) continue;
+          const idx = ty * mapW + tx;
+          const oldGid = layer.data[idx];
+          if (oldGid !== 0) {
+            changes.push({ index: idx, oldGid, newGid: 0 });
+          }
+        }
+      }
+      if (changes.length === 0) return state;
+      const newLayers = [...state.mapData.layers];
+      const newLayer = { ...newLayers[state.activeLayerIndex] };
+      const newData = [...newLayer.data!];
+      changes.forEach(c => { newData[c.index] = c.newGid; });
+      newLayer.data = newData;
+      newLayers[state.activeLayerIndex] = newLayer;
+      const undoStack = [...state.undoStack, { layerIndex: state.activeLayerIndex, changes }];
+      if (undoStack.length > 100) undoStack.shift();
+      return {
+        ...state,
+        mapData: { ...state.mapData, layers: newLayers },
+        undoStack,
+        redoStack: [],
+        dirty: true,
+        selection: null,
+      };
+    }
+    case 'PASTE_CLIPBOARD': {
+      if (!state.mapData || !state.clipboard) return state;
+      const layer = state.mapData.layers[state.activeLayerIndex];
+      if (!layer || layer.type !== 'tilelayer' || !layer.data) return state;
+      const cb = state.clipboard;
+      const mapW = state.mapData.width;
+      const mapH = state.mapData.height;
+      const changes: Array<{ index: number; oldGid: number; newGid: number }> = [];
+      for (let dy = 0; dy < cb.height; dy++) {
+        for (let dx = 0; dx < cb.width; dx++) {
+          const tx = action.x + dx;
+          const ty = action.y + dy;
+          if (tx < 0 || tx >= mapW || ty < 0 || ty >= mapH) continue;
+          const idx = ty * mapW + tx;
+          const oldGid = layer.data[idx];
+          const newGid = cb.gids[dy][dx];
+          if (oldGid !== newGid) {
+            changes.push({ index: idx, oldGid, newGid });
+          }
+        }
+      }
+      if (changes.length === 0) return state;
+      const newLayers = [...state.mapData.layers];
+      const newLayer = { ...newLayers[state.activeLayerIndex] };
+      const newData = [...newLayer.data!];
+      changes.forEach(c => { newData[c.index] = c.newGid; });
+      newLayer.data = newData;
+      newLayers[state.activeLayerIndex] = newLayer;
+      const undoStack = [...state.undoStack, { layerIndex: state.activeLayerIndex, changes }];
+      if (undoStack.length > 100) undoStack.shift();
+      return {
+        ...state,
+        mapData: { ...state.mapData, layers: newLayers },
+        undoStack,
+        redoStack: [],
+        dirty: true,
+      };
+    }
     default:
       return state;
   }
@@ -383,6 +472,8 @@ const initialState: EditorState = {
   sortedGids: [],
   showGrid: true,
   showCollision: true,
+  selection: null,
+  clipboard: null,
 };
 
 export function useMapEditor() {

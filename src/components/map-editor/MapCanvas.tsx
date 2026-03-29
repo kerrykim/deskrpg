@@ -40,6 +40,8 @@ export function MapCanvas({ state, dispatch, findTileset, onStatusUpdate }: MapC
   // Drag state refs (avoid re-renders during drag)
   const isDraggingTile = useRef(false);
   const isDraggingCharacter = useRef(false);
+  const isSelectDragging = useRef(false);
+  const selectStart = useRef<{ x: number; y: number } | null>(null);
   const pendingChanges = useRef<Array<{ index: number; oldGid: number; newGid: number }>>([]);
   const pendingLayerIndex = useRef<number>(0);
   const walkIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -307,7 +309,25 @@ export function MapCanvas({ state, dispatch, findTileset, onStatusUpdate }: MapC
         }
       }
 
-      // 3. Paint/Erase
+      // 3. Select tool
+      if (state.tool === 'select' && e.button === 0) {
+        // If clipboard exists and we click, paste at this location
+        if (state.clipboard) {
+          const tile = screenToTile(mx, my);
+          dispatch({ type: 'PASTE_CLIPBOARD', x: tile.x, y: tile.y });
+          return;
+        }
+        const tile = screenToTile(mx, my);
+        isSelectDragging.current = true;
+        selectStart.current = { x: tile.x, y: tile.y };
+        dispatch({
+          type: 'SET_SELECTION',
+          selection: { x: tile.x, y: tile.y, width: 1, height: 1 },
+        });
+        return;
+      }
+
+      // 4. Paint/Erase
       if ((state.tool === 'paint' || state.tool === 'erase') && e.button === 0) {
         isDraggingTile.current = true;
         pendingChanges.current = [];
@@ -315,7 +335,7 @@ export function MapCanvas({ state, dispatch, findTileset, onStatusUpdate }: MapC
         applyTool(mx, my);
       }
     },
-    [state.mapData, state.tool, state.activeLayerIndex, panZoom, isCharacterHit, applyTool, startWalkAnimation],
+    [state.mapData, state.tool, state.activeLayerIndex, state.clipboard, panZoom, isCharacterHit, applyTool, startWalkAnimation, screenToTile, dispatch],
   );
 
   const handleMouseMove = useCallback(
@@ -364,7 +384,21 @@ export function MapCanvas({ state, dispatch, findTileset, onStatusUpdate }: MapC
         return;
       }
 
-      // 3. Paint/erase drag
+      // 3. Select drag
+      if (isSelectDragging.current && selectStart.current) {
+        const tile = screenToTile(mx, my);
+        const sx = Math.min(selectStart.current.x, tile.x);
+        const sy = Math.min(selectStart.current.y, tile.y);
+        const ex = Math.max(selectStart.current.x, tile.x);
+        const ey = Math.max(selectStart.current.y, tile.y);
+        dispatch({
+          type: 'SET_SELECTION',
+          selection: { x: sx, y: sy, width: ex - sx + 1, height: ey - sy + 1 },
+        });
+        return;
+      }
+
+      // 4. Paint/erase drag
       if (isDraggingTile.current) {
         applyTool(mx, my);
         return;
@@ -385,7 +419,7 @@ export function MapCanvas({ state, dispatch, findTileset, onStatusUpdate }: MapC
         }
       }
     },
-    [state.mapData, state.activeLayerIndex, panZoom, screenToTile, applyTool, directionFromDelta, onStatusUpdate],
+    [state.mapData, state.activeLayerIndex, panZoom, screenToTile, applyTool, directionFromDelta, onStatusUpdate, dispatch, isBlocked],
   );
 
   const handleMouseUp = useCallback(() => {
@@ -396,6 +430,12 @@ export function MapCanvas({ state, dispatch, findTileset, onStatusUpdate }: MapC
     if (isDraggingCharacter.current) {
       isDraggingCharacter.current = false;
       stopWalkAnimation();
+    }
+
+    // Select drag finalize
+    if (isSelectDragging.current) {
+      isSelectDragging.current = false;
+      selectStart.current = null;
     }
 
     // Tile drag -- changes already applied per-stroke via dispatch;

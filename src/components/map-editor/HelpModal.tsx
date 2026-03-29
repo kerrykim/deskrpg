@@ -31,6 +31,7 @@ const SECTIONS: ShortcutSection[] = [
     shortcuts: [
       { keys: ['B'], desc: 'Paint brush' },
       { keys: ['E'], desc: 'Eraser' },
+      { keys: ['S'], desc: 'Select tool' },
       { keys: ['Space'], desc: 'Hold to pan' },
     ],
   },
@@ -48,6 +49,10 @@ const SECTIONS: ShortcutSection[] = [
     shortcuts: [
       { keys: ['Ctrl', 'Z'], desc: 'Undo' },
       { keys: ['Ctrl', 'Y'], desc: 'Redo' },
+      { keys: ['Ctrl', 'C'], desc: 'Copy selected tiles' },
+      { keys: ['Ctrl', 'V'], desc: 'Paste' },
+      { keys: ['Backspace'], desc: 'Delete selected tiles' },
+      { keys: ['Escape'], desc: 'Clear selection' },
     ],
   },
   {

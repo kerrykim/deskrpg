@@ -146,6 +146,11 @@ export function useCanvasRenderer(
         drawGrid(ctx, mapW, mapH, tw, th, startCol, startRow, endCol, endRow);
       }
 
+      // 8.5. Selection overlay
+      if (state.selection) {
+        drawSelection(ctx, state.selection, tw, th);
+      }
+
       // 9. Restore
       ctx.restore();
     },
@@ -340,4 +345,28 @@ function drawGrid(
   }
 
   ctx.stroke();
+}
+
+function drawSelection(
+  ctx: CanvasRenderingContext2D,
+  selection: { x: number; y: number; width: number; height: number },
+  tw: number,
+  th: number,
+) {
+  const sx = selection.x * tw;
+  const sy = selection.y * th;
+  const sw = selection.width * tw;
+  const sh = selection.height * th;
+
+  // Semi-transparent fill
+  ctx.fillStyle = 'rgba(16, 185, 129, 0.15)';
+  ctx.fillRect(sx, sy, sw, sh);
+
+  // Dashed border
+  ctx.save();
+  ctx.setLineDash([4, 4]);
+  ctx.strokeStyle = 'rgba(16, 185, 129, 0.7)';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(sx, sy, sw, sh);
+  ctx.restore();
 }

@@ -481,7 +481,7 @@ export default function MapEditorLayout({
   const handleRemoveBg = useCallback(
     async (firstgid: number) => {
       const tsInfo = state.tilesetImages[firstgid];
-      if (!tsInfo?.img) return;
+      if (!tsInfo?.img || !state.mapData) return;
 
       setRemoveBgProgress({ firstgid, progress: 0 });
 
@@ -492,8 +492,39 @@ export default function MapEditorLayout({
 
         const newImg = new Image();
         newImg.onload = () => {
-          const newTsInfo: TilesetImageInfo = { ...tsInfo, img: newImg };
-          dispatch({ type: 'UPDATE_TILESET_IMAGE', firstgid, imageInfo: newTsInfo, imageDataUrl: resultDataUrl });
+          // Calculate new firstgid for the new tileset
+          let newFirstgid = 1;
+          for (const ts of state.mapData!.tilesets) {
+            const end = ts.firstgid + ts.tilecount;
+            if (end > newFirstgid) newFirstgid = end;
+          }
+
+          // Find the original tileset definition
+          const originalTs = state.mapData!.tilesets.find((t) => t.firstgid === firstgid);
+          if (!originalTs) {
+            setRemoveBgProgress(null);
+            return;
+          }
+
+          // Create a NEW tileset with the bg-removed image
+          const newTileset: TiledTileset = {
+            ...originalTs,
+            firstgid: newFirstgid,
+            name: `${originalTs.name} (no bg)`,
+            image: resultDataUrl,
+          };
+
+          const newImageInfo: TilesetImageInfo = {
+            img: newImg,
+            firstgid: newFirstgid,
+            columns: tsInfo.columns,
+            tilewidth: tsInfo.tilewidth,
+            tileheight: tsInfo.tileheight,
+            tilecount: tsInfo.tilecount,
+            name: `${tsInfo.name} (no bg)`,
+          };
+
+          dispatch({ type: 'ADD_TILESET', tileset: newTileset, imageInfo: newImageInfo });
           setRemoveBgProgress(null);
         };
         newImg.onerror = () => {
@@ -506,7 +537,7 @@ export default function MapEditorLayout({
         setRemoveBgProgress(null);
       }
     },
-    [state.tilesetImages, dispatch],
+    [state.tilesetImages, state.mapData, dispatch],
   );
 
   // === Sorted tileset list for palette ===
@@ -516,6 +547,49 @@ export default function MapEditorLayout({
       (a, b) => a.firstgid - b.firstgid,
     );
   }, [state.tilesetImages]);
+
+  // === Selection Operations ===
+
+  const handleCopy = useCallback(() => {
+    if (!state.mapData || !state.selection) return;
+    const layer = state.mapData.layers[state.activeLayerIndex];
+    if (!layer || layer.type !== 'tilelayer' || !layer.data) return;
+    const sel = state.selection;
+    const mapW = state.mapData.width;
+    const gids: number[][] = [];
+    for (let dy = 0; dy < sel.height; dy++) {
+      const row: number[] = [];
+      for (let dx = 0; dx < sel.width; dx++) {
+        const tx = sel.x + dx;
+        const ty = sel.y + dy;
+        if (tx >= 0 && tx < mapW && ty >= 0 && ty < state.mapData.height) {
+          row.push(layer.data[ty * mapW + tx]);
+        } else {
+          row.push(0);
+        }
+      }
+      gids.push(row);
+    }
+    dispatch({
+      type: 'SET_CLIPBOARD',
+      clipboard: { width: sel.width, height: sel.height, gids, layerIndex: state.activeLayerIndex },
+    });
+  }, [state.mapData, state.selection, state.activeLayerIndex, dispatch]);
+
+  const handlePaste = useCallback(() => {
+    if (!state.clipboard) return;
+    // Switch to select tool; the next click on canvas will place the clipboard
+    dispatch({ type: 'SET_TOOL', tool: 'select' });
+  }, [state.clipboard, dispatch]);
+
+  const handleDeleteSelection = useCallback(() => {
+    if (!state.selection) return;
+    dispatch({ type: 'DELETE_SELECTION' });
+  }, [state.selection, dispatch]);
+
+  const handleClearSelection = useCallback(() => {
+    dispatch({ type: 'CLEAR_SELECTION' });
+  }, [dispatch]);
 
   // === Space-held pan mode ===
 
@@ -539,6 +613,7 @@ export default function MapEditorLayout({
   useKeyboardShortcuts({
     onToolPaint: () => dispatch({ type: 'SET_TOOL', tool: 'paint' }),
     onToolErase: () => dispatch({ type: 'SET_TOOL', tool: 'erase' }),
+    onToolSelect: () => dispatch({ type: 'SET_TOOL', tool: 'select' }),
     onToggleGrid: () => dispatch({ type: 'TOGGLE_GRID' }),
     onZoomIn: () => dispatch({ type: 'SET_ZOOM', zoom: state.zoom + 0.5 }),
     onZoomOut: () => dispatch({ type: 'SET_ZOOM', zoom: state.zoom - 0.5 }),
@@ -554,6 +629,10 @@ export default function MapEditorLayout({
     onDeleteLayer: () => handleDeleteLayer(),
     onSpaceDown: handleSpaceDown,
     onSpaceUp: handleSpaceUp,
+    onCopy: handleCopy,
+    onPaste: handlePaste,
+    onDeleteSelection: handleDeleteSelection,
+    onClearSelection: handleClearSelection,
   });
 
   // === Resize Handle ===
@@ -593,7 +672,7 @@ export default function MapEditorLayout({
   // === Status bar info ===
 
   const activeLayerName = state.mapData?.layers[state.activeLayerIndex]?.name ?? '-';
-  const toolName = state.tool === 'paint' ? 'Paint' : state.tool === 'erase' ? 'Erase' : 'Pan';
+  const toolName = state.tool === 'paint' ? 'Paint' : state.tool === 'erase' ? 'Erase' : state.tool === 'select' ? 'Select' : 'Pan';
 
   // === Render ===
 

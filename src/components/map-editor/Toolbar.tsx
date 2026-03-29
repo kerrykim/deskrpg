@@ -73,6 +73,7 @@ export default function Toolbar({
       <ToolGroup>
         {toolBtn('paint', 'Paint', 'B')}
         {toolBtn('erase', 'Erase', 'E')}
+        {toolBtn('select', 'Select', 'S')}
         {toolBtn('pan', 'Pan', '⎵')}
       </ToolGroup>
 

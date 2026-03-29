@@ -232,13 +232,14 @@ function TilesetSection({
             </span>
           ) : (
             onRemoveBg && (
-              <button
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={onRemoveBg}
-                className="text-text-dim hover:text-primary-light text-micro transition-colors px-1"
-                title="Remove background"
+                title="Remove background (creates new tileset)"
               >
-                BG
-              </button>
+                Remove BG
+              </Button>
             )
           )}
           <button

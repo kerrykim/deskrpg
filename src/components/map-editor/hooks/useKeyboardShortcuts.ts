@@ -5,6 +5,7 @@ import { useEffect } from 'react';
 interface ShortcutCallbacks {
   onToolPaint: () => void;
   onToolErase: () => void;
+  onToolSelect: () => void;
   onToggleGrid: () => void;
   onZoomIn: () => void;
   onZoomOut: () => void;
@@ -18,6 +19,10 @@ interface ShortcutCallbacks {
   onDeleteLayer: () => void;
   onSpaceDown: () => void;
   onSpaceUp: () => void;
+  onCopy: () => void;
+  onPaste: () => void;
+  onDeleteSelection: () => void;
+  onClearSelection: () => void;
 }
 
 function isModalOpen(): boolean {
@@ -60,6 +65,14 @@ export function useKeyboardShortcuts(callbacks: ShortcutCallbacks): void {
             e.preventDefault();
             callbacks.onLoad();
             return;
+          case 'c':
+            e.preventDefault();
+            callbacks.onCopy();
+            return;
+          case 'v':
+            e.preventDefault();
+            callbacks.onPaste();
+            return;
         }
         return;
       }
@@ -75,6 +88,10 @@ export function useKeyboardShortcuts(callbacks: ShortcutCallbacks): void {
         case 'e':
         case 'E':
           callbacks.onToolErase();
+          break;
+        case 's':
+        case 'S':
+          callbacks.onToolSelect();
           break;
         case 'g':
         case 'G':
@@ -96,6 +113,12 @@ export function useKeyboardShortcuts(callbacks: ShortcutCallbacks): void {
           break;
         case 'Delete':
           callbacks.onDeleteLayer();
+          break;
+        case 'Backspace':
+          callbacks.onDeleteSelection();
+          break;
+        case 'Escape':
+          callbacks.onClearSelection();
           break;
         case ' ':
           e.preventDefault();
