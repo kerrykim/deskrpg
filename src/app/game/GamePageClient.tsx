@@ -1027,7 +1027,7 @@ function GamePageInner() {
   }, [resetDialog]);
 
   const handleDialogSend = useCallback(
-    (message: string) => {
+    async (message: string, files?: File[]) => {
       if (!socket || !dialogNpc) return;
       if (!socket.connected) {
         showToastNotification(
@@ -1036,10 +1036,31 @@ function GamePageInner() {
         );
         return;
       }
-      // Add player message immediately
-      setNpcMessages((prev) => [...prev, { role: "player", content: message }]);
+      // Add player message immediately (with file names if attached)
+      const displayMessage = files && files.length > 0
+        ? `${message}\n📎 ${files.map((f) => f.name).join(", ")}`
+        : message;
+      setNpcMessages((prev) => [...prev, { role: "player", content: displayMessage }]);
       streamBufferRef.current = "";
-      socket.emit("npc:chat", { npcId: dialogNpc.npcId, message });
+
+      // Convert files to ArrayBuffers for socket transport
+      let filePayloads: Array<{ name: string; type: string; size: number; data: ArrayBuffer }> | undefined;
+      if (files && files.length > 0) {
+        filePayloads = await Promise.all(
+          files.map(async (f) => ({
+            name: f.name,
+            type: f.type,
+            size: f.size,
+            data: await f.arrayBuffer(),
+          })),
+        );
+      }
+
+      socket.emit("npc:chat", {
+        npcId: dialogNpc.npcId,
+        message,
+        files: filePayloads,
+      });
     },
     [socket, dialogNpc, showToastNotification, t],
   );
