@@ -1030,7 +1030,7 @@ export function setupSocketHandlers(io: Server) {
         const messageToSend = withTaskReminder(trimmed + fileSection, getSocketLocale(socket));
 
         // Stream response via OpenClaw
-        chatLog(`  → gateway (${npcConfig._name}):`, messageToSend.slice(0, 150) + (messageToSend.length > 150 ? "..." : ""), fileAttachments ? `+${fileAttachments.length} attachments` : "");
+        chatLog(`  → gateway (${npcConfig._name}):`, messageToSend.slice(0, 150) + (messageToSend.length > 150 ? "..." : ""), fileAttachments ? `+${fileAttachments.length} attachments [${fileAttachments.map(a => `${a.name}:${a.mimeType}:media=${a.media.slice(0,30)}...`).join(", ")}]` : "");
         const response = await streamNpcResponse(socket, npcId, npcConfig, user.userId, messageToSend, fileAttachments);
         chatLog(`  ← npc response (${npcConfig._name}):`, response ? response.slice(0, 150) + (response.length > 150 ? "..." : "") : "(empty)");
         if (response) {

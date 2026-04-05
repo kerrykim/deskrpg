@@ -106,6 +106,7 @@ async function main() {
   const io = new Server(socketHttpServer, {
     path: "/socket.io",
     cors: { origin: "*" },
+    maxHttpBufferSize: 20e6, // 20 MB — supports 3 × 5 MB file attachments
   });
 
   // JWT helpers

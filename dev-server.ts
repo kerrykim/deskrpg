@@ -52,6 +52,7 @@ app.prepare().then(async () => {
 
   const io = new SocketServer(httpServer, {
     path: "/socket.io",
+    maxHttpBufferSize: 20e6, // 20 MB — supports 3 × 5 MB file attachments
   });
 
   if (process.env.NODE_ENV !== "production") {

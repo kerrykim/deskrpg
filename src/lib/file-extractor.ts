@@ -171,9 +171,9 @@ export function buildAttachments(
 ): Array<{ name: string; mimeType: string; media: string }> | undefined {
   const images = files.filter((f) => f.base64Data);
   if (images.length === 0) return undefined;
-  return images.map((f) => ({
-    name: f.name,
-    mimeType: f.mimeType,
-    media: f.base64Data!,
-  }));
+  return images.map((f) => {
+    // Strip data URI prefix — OpenClaw expects raw base64
+    const raw = f.base64Data!.replace(/^data:[^;]+;base64,/, "");
+    return { name: f.name, mimeType: f.mimeType, media: raw };
+  });
 }

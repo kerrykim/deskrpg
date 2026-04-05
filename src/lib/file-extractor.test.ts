@@ -162,5 +162,5 @@ test("buildAttachments returns array for image files", () => {
   assert.equal(result!.length, 1);
   assert.equal(result![0].name, "pic.png");
   assert.equal(result![0].mimeType, "image/png");
-  assert.equal(result![0].media, "data:image/png;base64,abc");
+  assert.equal(result![0].media, "abc"); // data URI prefix stripped for OpenClaw
 });
