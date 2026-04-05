@@ -301,7 +301,7 @@ class OpenClawGateway {
    * @param {(delta: string) => void} onDelta - called for each streaming chunk
    * @returns {Promise<string>} full response text
    */
-  chatSend(agentId, sessionKey, message, onDelta) {
+  chatSend(agentId, sessionKey, message, onDelta, attachments) {
     return new Promise((resolve, reject) => {
       if (!this.isConnected()) {
         return reject(new Error(`Gateway not connected (status: ${this._status}), cannot send chat to ${agentId}`));
@@ -312,11 +312,15 @@ class OpenClawGateway {
 
       let id;
       try {
-        id = this._sendRequest("chat.send", {
+        const params = {
           sessionKey: fullSessionKey,
           message,
           idempotencyKey: randomUUID(),
-        });
+        };
+        if (attachments && attachments.length > 0) {
+          params.attachments = attachments;
+        }
+        id = this._sendRequest("chat.send", params);
       } catch (err) {
         return reject(err);
       }
