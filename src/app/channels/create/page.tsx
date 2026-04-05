@@ -3,14 +3,11 @@
 import { Suspense, useState, useEffect, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { NPC_PRESETS } from "@/lib/npc-presets";
-import { PERSONA_PRESETS, applyPresetName } from "@/lib/npc-persona-presets";
-import { useLocale, useT } from "@/lib/i18n";
+import { useT } from "@/lib/i18n";
 import { getLocalizedErrorMessage } from "@/lib/i18n/error-codes";
 import { ChevronRight } from "lucide-react";
 import MapTemplateGrid from "@/components/map-editor/MapTemplateGrid";
 import OpenClawPairingStatusCard, { type OpenClawPairingStatus } from "@/components/openclaw/OpenClawPairingStatusCard";
-import { getDefaultMeetingProtocol, localizeNpcPromptDocument } from "@/lib/npc-agent-defaults";
 import { CHANNEL_PASSWORD_MIN_LENGTH } from "@/lib/security-policy";
 import type { GroupMemberRole } from "@/lib/rbac/constants";
 
@@ -78,7 +75,6 @@ function CreateChannelPageInner() {
   const searchParams = useSearchParams();
   const characterId = searchParams.get("characterId");
   const t = useT();
-  const { locale } = useLocale();
 
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -106,16 +102,6 @@ function CreateChannelPageInner() {
   const [gatewayAgents, setGatewayAgents] = useState<GatewayAgentOption[]>([]);
   const [gatewayConnectionState, setGatewayConnectionState] = useState<GatewayConnectionState>({ status: "idle" });
 
-  // --- Default NPC ---
-  const [npcName, setNpcName] = useState("");
-  const [agentAction, setAgentAction] = useState<"select" | "create">("create");
-  const [selectedAgentId, setSelectedAgentId] = useState("");
-  const [newAgentId, setNewAgentId] = useState("");
-  const [personaPresetId, setPersonaPresetId] = useState("custom");
-  const [npcIdentity, setNpcIdentity] = useState("");
-  const [npcSoul, setNpcSoul] = useState("");
-  const [npcAdvancedOpen, setNpcAdvancedOpen] = useState(false);
-  const [npcAppearancePreset, setNpcAppearancePreset] = useState("receptionist");
 
   // Auto-select template from URL param
   useEffect(() => {
@@ -192,10 +178,6 @@ function CreateChannelPageInner() {
   }, [gatewayMode, selectedGatewayId, storedGateways]);
 
   const selectedStoredGateway = storedGateways.find((gateway) => gateway.id === selectedGatewayId) ?? null;
-  const hasGatewaySelection = gatewayMode === "stored"
-    ? Boolean(selectedGatewayId)
-    : gatewayUrl.trim().length > 0;
-  const hasTestAgents = gatewayConnectionState.status === "connected" && gatewayAgents.length > 0;
   const creatableGroups = groups.filter((group) => group.canCreateChannel);
   const hasAvailableGroups = creatableGroups.length > 0;
 
@@ -203,45 +185,12 @@ function CreateChannelPageInner() {
     setTestingConnection(false);
     setGatewayConnectionState({ status: "idle" });
     setGatewayAgents([]);
-    setSelectedAgentId("");
-    setAgentAction("create");
   }, []);
-
-  const handlePersonaPresetChange = useCallback((presetId: string) => {
-    setPersonaPresetId(presetId);
-    if (presetId === "custom") return;
-    const preset = PERSONA_PRESETS.find((p) => p.id === presetId);
-    if (!preset) return;
-    const currentName = npcName.trim() || t("npc.namePlaceholder");
-    setNpcIdentity(localizeNpcPromptDocument(applyPresetName(preset.identity, currentName), locale, "identity"));
-    setNpcSoul(localizeNpcPromptDocument(applyPresetName(preset.soul, currentName), locale, "soul"));
-    if (preset.suggestedAppearancePreset) {
-      setNpcAppearancePreset(preset.suggestedAppearancePreset);
-    }
-  }, [locale, npcName, t]);
-
-  const handleNpcNameBlur = () => {
-    // Re-apply preset with updated name
-    if (personaPresetId !== "custom") {
-      const preset = PERSONA_PRESETS.find((p) => p.id === personaPresetId);
-      if (preset) {
-        const currentName = npcName.trim() || t("npc.namePlaceholder");
-        setNpcIdentity(localizeNpcPromptDocument(applyPresetName(preset.identity, currentName), locale, "identity"));
-        setNpcSoul(localizeNpcPromptDocument(applyPresetName(preset.soul, currentName), locale, "soul"));
-      }
-    }
-  };
-
-  useEffect(() => {
-    if (personaPresetId === "custom") return;
-    handlePersonaPresetChange(personaPresetId);
-  }, [handlePersonaPresetChange, locale, personaPresetId]);
 
   const handleTestConnection = async () => {
     setTestingConnection(true);
     setGatewayConnectionState({ status: "idle" });
     setGatewayAgents([]);
-    setSelectedAgentId("");
     try {
       const res = gatewayMode === "stored"
         ? await fetch(`/api/gateways/${selectedGatewayId}/test`, { method: "POST" })
@@ -254,23 +203,15 @@ function CreateChannelPageInner() {
           }),
         });
       const data = await res.json();
-      if (data.ok && data.agents?.length > 0) {
-        setGatewayAgents(data.agents);
-        setGatewayConnectionState({ status: "connected" });
-        setAgentAction("select");
-        setSelectedAgentId(data.agents[0].id);
-      } else if (data.ok) {
+      if (data.ok) {
         setGatewayAgents(Array.isArray(data.agents) ? data.agents : []);
         setGatewayConnectionState({ status: "connected" });
-        setAgentAction("create");
       } else if (isGatewayPairingRequired(data)) {
-        setAgentAction("create");
         setGatewayConnectionState({
           status: "pairing_required",
           requestId: typeof data.requestId === "string" ? data.requestId : null,
         });
       } else {
-        setAgentAction("create");
         setGatewayConnectionState({
           status: "error",
           error: getLocalizedErrorMessage(t, data, "errors.connectionFailed"),
@@ -302,9 +243,6 @@ function CreateChannelPageInner() {
     setError("");
 
     try {
-      const selectedAppearance = NPC_PRESETS.find((p) => p.id === npcAppearancePreset)?.appearance;
-      const effectiveAgentId = agentAction === "select" ? selectedAgentId : newAgentId;
-
       const payload: Record<string, unknown> = {
         name: name.trim(),
         description: description.trim() || null,
@@ -322,20 +260,6 @@ function CreateChannelPageInner() {
         payload.gatewayConfig = {
           url: gatewayUrl.trim(),
           token: gatewayToken.trim() || null,
-        };
-      }
-
-      if (hasGatewaySelection && npcName.trim()) {
-        payload.defaultNpc = {
-          name: npcName.trim(),
-          agentId: effectiveAgentId,
-          agentAction: agentAction === "select" ? "select" : (newAgentId ? "create" : undefined),
-          presetId: personaPresetId !== "custom" ? personaPresetId : undefined,
-          identity: npcIdentity,
-          soul: npcSoul,
-          meetingProtocol: getDefaultMeetingProtocol(locale),
-          locale,
-          appearance: selectedAppearance,
         };
       }
 
@@ -649,165 +573,6 @@ function CreateChannelPageInner() {
               </div>
             )}
           </div>
-
-          {/* ============================================================= */}
-          {/* Default NPC (visible only when gateway URL is filled) */}
-          {/* ============================================================= */}
-          {hasGatewaySelection && (
-            <div className="border border-border rounded-lg p-4 space-y-4 bg-surface/50">
-              <h3 className="text-sm font-semibold text-text-secondary">{t("npc.default")}</h3>
-
-              {/* NPC Name */}
-              <div>
-                <label className="block text-xs font-semibold mb-1 text-text-secondary">{t("npc.name")}</label>
-                <input
-                  type="text"
-                  value={npcName}
-                  onChange={(e) => setNpcName(e.target.value)}
-                  onBlur={handleNpcNameBlur}
-                  maxLength={100}
-                  className="w-full px-3 py-2 bg-surface border border-border rounded text-text placeholder-text-dim focus:outline-none focus:ring-2 focus:ring-primary-light focus:border-transparent text-sm"
-                  placeholder={t("npc.namePlaceholder")}
-                />
-              </div>
-
-              {/* Agent Selection */}
-              <div>
-                <label className="block text-xs font-semibold mb-1 text-text-secondary">{t("npc.agent")}</label>
-                {hasTestAgents ? (
-                  <div className="space-y-2">
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setAgentAction("select")}
-                        className={`px-3 py-1 rounded text-xs ${
-                          agentAction === "select"
-                            ? "bg-primary text-white"
-                            : "bg-surface-raised text-text-muted"
-                        }`}
-                      >
-                        {t("npc.selectExisting")}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setAgentAction("create")}
-                        className={`px-3 py-1 rounded text-xs ${
-                          agentAction === "create"
-                            ? "bg-primary text-white"
-                            : "bg-surface-raised text-text-muted"
-                        }`}
-                      >
-                        {t("npc.newAgent")}
-                      </button>
-                    </div>
-                    {agentAction === "select" ? (
-                      <select
-                        value={selectedAgentId}
-                        onChange={(e) => setSelectedAgentId(e.target.value)}
-                        className="w-full px-3 py-2 bg-surface border border-border rounded text-text text-sm focus:outline-none focus:ring-2 focus:ring-primary-light focus:border-transparent"
-                      >
-                        {gatewayAgents.map((a) => (
-                          <option key={a.id} value={a.id}>
-                            {a.name || a.id}
-                          </option>
-                        ))}
-                      </select>
-                    ) : (
-                      <input
-                        type="text"
-                        value={newAgentId}
-                        onChange={(e) => setNewAgentId(e.target.value)}
-                        className="w-full px-3 py-2 bg-surface border border-border rounded text-text placeholder-text-dim focus:outline-none focus:ring-2 focus:ring-primary-light focus:border-transparent text-sm"
-                        placeholder={t("npc.agentIdPlaceholder")}
-                      />
-                    )}
-                  </div>
-                ) : (
-                  <input
-                    type="text"
-                    value={newAgentId}
-                    onChange={(e) => setNewAgentId(e.target.value)}
-                    className="w-full px-3 py-2 bg-surface border border-border rounded text-text placeholder-text-dim focus:outline-none focus:ring-2 focus:ring-primary-light focus:border-transparent text-sm"
-                    placeholder={t("npc.agentIdPlaceholder")}
-                  />
-                )}
-              </div>
-
-              {/* Persona Preset */}
-              <div>
-                <label className="block text-xs font-semibold mb-1 text-text-secondary">{t("npc.personaPreset")}</label>
-                <select
-                  value={personaPresetId}
-                  onChange={(e) => handlePersonaPresetChange(e.target.value)}
-                  className="w-full px-3 py-2 bg-surface border border-border rounded text-text text-sm focus:outline-none focus:ring-2 focus:ring-primary-light focus:border-transparent"
-                >
-                  <option value="custom">{t("npc.personaCustom")}</option>
-                  {PERSONA_PRESETS.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name} - {p.nameKo}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Identity */}
-              <div>
-                <label className="block text-xs font-semibold mb-1 text-text-secondary">{t("npc.identity")}</label>
-                <textarea
-                  value={npcIdentity}
-                  onChange={(e) => setNpcIdentity(e.target.value)}
-                  rows={4}
-                  className="w-full px-3 py-2 bg-surface border border-border rounded text-text placeholder-text-dim focus:outline-none focus:ring-2 focus:ring-primary-light focus:border-transparent resize-none text-sm"
-                  placeholder={t("npc.identityPlaceholder")}
-                />
-              </div>
-
-              {/* Advanced: Soul */}
-              <div>
-                <button
-                  type="button"
-                  onClick={() => setNpcAdvancedOpen(!npcAdvancedOpen)}
-                  className="text-xs text-text-muted hover:text-text flex items-center gap-1"
-                >
-                  <ChevronRight className={`w-3.5 h-3.5 transition-transform duration-200 ${npcAdvancedOpen ? "rotate-90" : ""}`} />
-                  <span>{t("npc.advanced")}</span>
-                </button>
-                {npcAdvancedOpen && (
-                  <div className="mt-2">
-                    <label className="block text-xs font-semibold mb-1 text-text-secondary">{t("npc.soul")}</label>
-                    <textarea
-                      value={npcSoul}
-                      onChange={(e) => setNpcSoul(e.target.value)}
-                      rows={6}
-                      className="w-full px-3 py-2 bg-surface border border-border rounded text-text placeholder-text-dim focus:outline-none focus:ring-2 focus:ring-primary-light focus:border-transparent resize-none text-sm"
-                      placeholder={t("npc.soulPlaceholder")}
-                    />
-                  </div>
-                )}
-              </div>
-
-              {/* Appearance Preset */}
-              <div>
-                <label className="block text-xs font-semibold mb-2 text-text-secondary">{t("npc.appearance")}</label>
-                <div className="grid grid-cols-5 gap-2">
-                  {NPC_PRESETS.map((p) => (
-                    <button
-                      key={p.id}
-                      type="button"
-                      onClick={() => setNpcAppearancePreset(p.id)}
-                      className={`p-2 rounded-lg border text-center transition text-xs ${
-                        npcAppearancePreset === p.id
-                          ? "border-primary-light bg-primary-muted"
-                          : "border-border bg-surface hover:border-border"
-                      }`}
-                    >
-                      <div className="font-semibold">{p.name}</div>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
 
           {error && <p className="text-danger text-sm">{error}</p>}
 
