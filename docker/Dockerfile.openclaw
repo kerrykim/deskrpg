@@ -8,7 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY docker/openclaw-entrypoint.sh /usr/local/bin/deskrpg-openclaw-entrypoint.sh
-RUN chmod +x /usr/local/bin/deskrpg-openclaw-entrypoint.sh
+RUN sed -i 's/\r$//' /usr/local/bin/deskrpg-openclaw-entrypoint.sh && chmod +x /usr/local/bin/deskrpg-openclaw-entrypoint.sh
 
 USER root
 ENV OPENCLAW_CONFIG_PATH=/home/node/.openclaw/openclaw.json
